@@ -1,0 +1,112 @@
+diff --git a/geocoder.admin.inc b/geocoder.admin.inc
+index 36cda8d..b86edbe 100644
+--- a/geocoder.admin.inc
++++ b/geocoder.admin.inc
+@@ -110,16 +110,79 @@ function geocoder_admin_settings($form, &$form_state) {
+     '#description' => t('Geocoder caches all queries by default. Do you want that to include the ones with no results? If not, it will be checked every time, probably with the same no-result.'),
+   );
+ 
++  geophp_load();
++  $month_utc = strtotime('-1 month');
++  $week_utc = strtotime('-1 week');
++  $entries = db_query('SELECT * FROM {cache_geocoder}');
++  $empty = $non_empty = 0;
++  $month = $week = 0;
++  foreach ($entries as $entry) {
++    $data = unserialize($entry->data);
++
++    $data['geometry'] ? $non_empty++ : $empty++;
++
++    if ($entry->created > $month_utc) {
++      $month++;
++    }
++    if ($entry->created > $week_utc) {
++      $week++;
++    }
++  }
++
++  $form['cache'] = array(
++    '#type' => 'fieldset',
++    '#title' => t('Cache (!total)', array('!total' => $empty + $non_empty)),
++    '#collapsible' => TRUE,
++    '#collapsed' => TRUE,
++  );
++
++  $presuffix = array(
++    '#prefix' => '<p>',
++    '#suffix' => '</p>',
++  );
++  $form['cache']['emptiness'] = array(
++    '#markup' => t('!non_empty entries have results, and !empty have no results.', array(
++      '!non_empty' => $non_empty,
++      '!empty' => $empty,
++    )),
++  ) + $presuffix;
++  $form['cache']['dated'] = array(
++    '#markup' => t('!month entries are from the last month, !week of those are from the last week.', array(
++      '!month' => $month,
++      '!week' => $week,
++    )),
++  ) + $presuffix;
++
++  $form['cache']['clear'] = array(
++    '#type' => 'container',
++  );
++  $form['cache']['clear']['all'] = array(
++    '#type' => 'submit',
++    '#value' => t('Clear ALL cache'),
++    '#submit' => array('geocoder_admin_settings_clear_cache_all_submit'),
++  );
++  $form['cache']['clear']['empty'] = array(
++    '#type' => 'submit',
++    '#value' => t('Clear all NO-RESULTS cache'),
++    '#submit' => array('geocoder_admin_settings_clear_cache_noresults_submit'),
++  );
++
+   $form['#submit'][] = 'geocoder_admin_settings_submit';
+   return system_settings_form($form);
+ }
+ 
++/**
++ * Validation callback for geocoder_admin_settings().
++ */
+ function geocoder_admin_settings_validate($form_id, $form_values) {
+   if (!empty($form_values['values']['geocoder_apikey_yahoo']) && preg_match("/[^A-Za-z0-9\\-]/", trim($form_values['values']['geocoder_apikey_yahoo']))) {
+     form_set_error('geocoder_apikey_yahoo', t('Yahoo API keys are alpha numeric and dashes only.'));
+   }
+ }
+ 
++/**
++ * Submit callback for geocoder_admin_settings().
++ */
+ function geocoder_admin_settings_submit($form, &$form_state) {
+   $geocoder_settings= variable_get("geocoder_settings", array());
+   $geocoder_settings['geocoder_apikey_yahoo'] = trim($form_state['values']['geocoder_apikey_yahoo']);
+@@ -128,3 +191,27 @@ function geocoder_admin_settings_submit($form, &$form_state) {
+   $geocoder_settings['geocoder_apikey_google'] = trim($form_state['values']['geocoder_apikey_google']);
+   variable_set("geocoder_settings", $geocoder_settings);
+ }
++
++/**
++ * Clear cache (ALL) submit handler from geocoder_admin_settings().
++ */
++function geocoder_admin_settings_clear_cache_all_submit($form, &$form_state) {
++  cache_clear_all('*', 'cache_geocoder', TRUE);
++
++  drupal_set_message(t('All Geocoder cache cleared.'));
++}
++
++/**
++ * Clear cache (EMPTY) submit handler from geocoder_admin_settings().
++ */
++function geocoder_admin_settings_clear_cache_noresults_submit($form, &$form_state) {
++  $entries = db_query('SELECT * FROM {cache_geocoder}');
++  foreach ($entries as $entry) {
++    $data = unserialize($entry->data);
++    if (!$data['geometry']) {
++      cache_clear_all($entry->cid, 'cache_geocoder', FALSE);
++    }
++  }
++
++  drupal_set_message(t('No-results Geocoder cache cleared.'));
++}
